@@ -11,19 +11,31 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-kern_return_t send_message(service_conn_t socket, CFPropertyListRef plist);
-CFPropertyListRef receive_message(service_conn_t socket);
+#define swap32 __builtin_bswap32
+
+// https://asentientbot.github.io/p0sixspwn/
+kern_return_t send_message(service_conn_t socket, CFPropertyListRef plist) {
+	CFDataRef data=CFPropertyListCreateXMLData(NULL,plist);
+	uint32_t size=CFDataGetLength(data);
+	uint32_t sizeSwapped=swap32(size);
+	send(socket,&sizeSwapped,4,0);
+	send(socket,CFDataGetBytePtr(data),size,0);
+}
+
+CFPropertyListRef receive_message(service_conn_t socket) {
+	uint32_t sizeSwapped;
+	int sizeMessageSize=recv(socket,&sizeSwapped,4,0);
+	if(sizeMessageSize==4)
+	{
+		uint32_t size=swap32(sizeSwapped);
+		void* buffer=malloc(size);
+		recv(socket,buffer,size,0);
+		CFDataRef data=CFDataCreateWithBytesNoCopy(NULL,buffer,size,NULL);
+		return CFPropertyListCreateFromXMLData(NULL,data,0,0);
+	}
+}
 
 static char *real_dmg, *real_dmg_signature, *ddi_dmg;
-
-static void print_data(CFDataRef data)
-{
-	if (data == NULL) {
-		printf("[null]\n");
-		return;
-	}
-	printf("[%.*s]\n", (int)CFDataGetLength(data), CFDataGetBytePtr(data));
-}
 
 void qwrite(afc_connection * afc, const char *from, const char *to)
 {
@@ -63,7 +75,6 @@ static void cb(am_device_notification_callback_info * info, void *foo)
 		    AMDeviceCopyValue(dev, 0, CFSTR("ProductVersion"));
 		assert(product);
 		UniChar first = CFStringGetCharacterAtIndex(product, 0);
-		int epoch = first - '0';
 Retry:	{}
 		printf("Attempting to mount image...\n");
 
@@ -78,7 +89,6 @@ Retry:	{}
 		qwrite(afc, ddi_dmg, "PublicStaging/ddi.dimage");
 
 		service_conn_t mim_socket1 = 0;
-		service_conn_t mim_socket2 = 0;
 		assert(!AMDeviceStartService(dev, CFSTR("com.apple.mobile.mobile_image_mounter"), &mim_socket1, NULL));
 		assert(mim_socket1);
 
@@ -103,7 +113,6 @@ Retry:	{}
 
 		result = receive_message(mim_socket1);
 
-		int len = CFDataGetLength(CFPropertyListCreateXMLData(NULL, result));
 		char* bytes = CFDataGetBytePtr(CFPropertyListCreateXMLData(NULL, result));
 
 		if(strstr(bytes, "Complete")) {
@@ -138,7 +147,6 @@ int main(int argc, char **argv)
 	real_dmg_signature = argv[2];
 	ddi_dmg = argv[3];
 
-	AMDAddLogFileDescriptor(2);
 	am_device_notification *notif;
 	assert(!AMDeviceNotificationSubscribe(cb, 0, 0, NULL, &notif));
 	CFRunLoopRun();
