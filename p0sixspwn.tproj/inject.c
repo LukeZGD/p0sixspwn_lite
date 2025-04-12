@@ -10,6 +10,7 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/socket.h>
 
 #define swap32 __builtin_bswap32
 
